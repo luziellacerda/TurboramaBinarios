@@ -1,6 +1,6 @@
-name: Build Turborama Binaries Package
+name: Publish TurboRama Binaries
 
-"on":
+on:
   workflow_dispatch:
   push:
     branches:
@@ -11,155 +11,48 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  publish:
     runs-on: windows-2022
 
-    defaults:
-      run:
-        shell: powershell
-
     steps:
-      - name: Checkout repository
+      - name: Checkout repository with LFS
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
-      - name: Prepare folders
+      - name: Pull Git LFS files
+        shell: powershell
         run: |
-          Remove-Item work -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item output -Recurse -Force -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path work | Out-Null
-          New-Item -ItemType Directory -Force -Path output | Out-Null
+          git lfs install
+          git lfs pull
 
-      - name: Download original RetroBat binaries
+      - name: Validate TurboRama.7z
+        shell: powershell
         run: |
-          $url = "http://www.retrobat.org/repo/win64/stable/retrobat_binaries.7z"
-          $file = "work\retrobat_binaries.7z"
-
-          Write-Host "Downloading $url"
-          Invoke-WebRequest -Uri $url -OutFile $file
-
-          if (!(Test-Path $file)) {
-            Write-Host "ERROR: retrobat_binaries.7z was not downloaded"
+          if (!(Test-Path "TurboRama.7z")) {
+            Write-Host "ERROR: TurboRama.7z nao encontrado"
             exit 1
           }
 
-      - name: Extract original package
-        run: |
-          $sevenZip = "C:\Program Files\7-Zip\7z.exe"
+          $size = (Get-Item "TurboRama.7z").Length
+          Write-Host "TurboRama.7z tamanho: $size bytes"
 
-          if (!(Test-Path $sevenZip)) {
-            Write-Host "ERROR: 7z.exe not found"
+          if ($size -lt 100000) {
+            Write-Host "ERROR: TurboRama.7z parece estar vazio ou veio como ponteiro do Git LFS"
             exit 1
           }
-
-          & $sevenZip x "work\retrobat_binaries.7z" "-owork\extracted" -y
-
-          if (!(Test-Path "work\extracted")) {
-            Write-Host "ERROR: extraction failed"
-            exit 1
-          }
-
-      - name: Rename RetroBat root executable to TurboRama
-        run: |
-          $root = "work\extracted"
-
-          $retro1 = Join-Path $root "RetroBat.exe"
-          $retro2 = Join-Path $root "retrobat.exe"
-          $turbo1 = Join-Path $root "Turborama.exe"
-          $turboFinal = Join-Path $root "TurboRama.exe"
-
-          if (Test-Path $turboFinal) {
-            Write-Host "TurboRama.exe already exists"
-          }
-          elseif (Test-Path $retro1) {
-            Rename-Item -LiteralPath $retro1 -NewName "TurboRama.exe" -Force
-            Write-Host "Renamed RetroBat.exe to TurboRama.exe"
-          }
-          elseif (Test-Path $retro2) {
-            Rename-Item -LiteralPath $retro2 -NewName "TurboRama.exe" -Force
-            Write-Host "Renamed retrobat.exe to TurboRama.exe"
-          }
-          elseif (Test-Path $turbo1) {
-            Rename-Item -LiteralPath $turbo1 -NewName "TurboRama.exe" -Force
-            Write-Host "Renamed Turborama.exe to TurboRama.exe"
-          }
-          else {
-            Write-Host "ERROR: root launcher executable not found"
-            Get-ChildItem $root -Force
-            exit 1
-          }
-
-          Remove-Item $retro1 -Force -ErrorAction SilentlyContinue
-          Remove-Item $retro2 -Force -ErrorAction SilentlyContinue
-          Remove-Item $turbo1 -Force -ErrorAction SilentlyContinue
-
-      - name: Patch text references
-        run: |
-          $root = "work\extracted"
-          $extensions = @(".bat", ".cmd", ".ini", ".cfg", ".txt", ".xml", ".json", ".yml", ".yaml", ".ps1", ".md")
-          $changed = 0
-
-          Get-ChildItem -LiteralPath $root -Recurse -File | ForEach-Object {
-            if ($extensions -contains $_.Extension.ToLowerInvariant()) {
-              try {
-                $content = Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 -ErrorAction Stop
-                $new = $content `
-                  -replace "RetroBat\.exe", "TurboRama.exe" `
-                  -replace "retrobat\.exe", "TurboRama.exe" `
-                  -replace "RetroBat", "TurboRama" `
-                  -replace "retrobat", "turborama"
-
-                if ($new -ne $content) {
-                  Set-Content -LiteralPath $_.FullName -Value $new -Encoding UTF8
-                  $changed++
-                }
-              } catch {
-              }
-            }
-          }
-
-          Write-Host "Patched text files: $changed"
-
-      - name: Validate package
-        run: |
-          if (!(Test-Path "work\extracted\TurboRama.exe")) {
-            Write-Host "ERROR: TurboRama.exe not found after patch"
-            exit 1
-          }
-
-          if (Test-Path "work\extracted\RetroBat.exe") {
-            Write-Host "ERROR: RetroBat.exe still exists"
-            exit 1
-          }
-
-          Write-Host "Final root files:"
-          Get-ChildItem "work\extracted" -Force
-
-      - name: Create turborama_binaries.7z
-        run: |
-          $sevenZip = "C:\Program Files\7-Zip\7z.exe"
-
-          Push-Location "work\extracted"
-          & $sevenZip a "..\..\output\turborama_binaries.7z" "*" -mx=9
-          Pop-Location
-
-          if (!(Test-Path "output\turborama_binaries.7z")) {
-            Write-Host "ERROR: turborama_binaries.7z was not created"
-            exit 1
-          }
-
-          Get-Item "output\turborama_binaries.7z"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: turborama_binaries
-          path: output/turborama_binaries.7z
+          name: TurboRama
+          path: TurboRama.7z
 
-      - name: Publish continuous-master release
+      - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: continuous-master
-          name: continuous-master
-          files: output/turborama_binaries.7z
+          name: TurboRama Binarios
+          files: TurboRama.7z
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
